@@ -1,843 +1,554 @@
 #include <iostream>
 #include <string>
-#include <cstdio> // Untuk operasi file
-#include <ctime>  // Untuk waktu registrasi
-#include <cmath>  // Untuk fungsi sqrt()
+#include <cstdio> // Untuk operasi file (fopen, fwrite, fread, fclose)
+#include <ctime> // Untuk waktu registrasi (time_t, localtime, strftime)
+#include <cmath> // Untuk fungsi sqrt() di pencarian
+#include <iomanip> // Pastikan ini ada untuk setw
 
 using namespace std;
 
-// --- KONSTANTA dan STRUCT --- //
-const int MAX_POLI = 8;
-const string poliList[MAX_POLI] = {
-    "Gigi", "Mata", "Anak", "Umum", "Kandungan", "THT", "Kulit", "Saraf"
-};
+// --- KONSTANTA dan STRUKTUR DATA --- //
+const int MAKS_POLI = 8;
+const string daftarPoli[MAKS_POLI] = {"Gigi", "Mata", "Anak", "Umum", "Kandungan", "THT", "Kulit", "Saraf"};
+const char daftarKodePoli[MAKS_POLI] = {'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'};
 
-// Struct untuk pasien (doubly linked list)
+// Struktur data untuk pasien (daftar berantai ganda)
 struct Pasien {
     string nama;
     string nik;
     string alamat;
     int umur;
-    float bb;  // berat badan
-    float tb;  // tinggi badan
-    string poli;
-    time_t waktuRegistrasi;
-    Pasien* next;
-    Pasien* prev; // Pointer prev untuk doubly linked list
+    float beratBadan;
+    float tinggiBadan;
+    string poli; // Menyimpan nama poli lengkap
+    time_t waktuPendaftaran;
+    Pasien* berikutnya;
+    Pasien* sebelumnya;
 };
 
-// Struct untuk riwayat (doubly linked list)
+// Struktur data untuk riwayat (daftar berantai ganda)
 struct Riwayat {
     string nik;
     string nama;
     string poli;
     time_t waktuPelayanan;
-    Riwayat* next;
-    Riwayat* prev;
+    Riwayat* berikutnya;
+    Riwayat* sebelumnya;
 };
 
-// Struct untuk undo (stack)
-struct UndoNode {
+// Struktur data untuk undo (tumpukan)
+struct NodeUndo {
     Pasien* pasien;
-    UndoNode* next;
+    NodeUndo* berikutnya;
 };
 
-// Pointer global
-Pasien* head = nullptr;
-Pasien* tail = nullptr;
-Riwayat* headRiwayat = nullptr;
-Riwayat* tailRiwayat = nullptr;
-UndoNode* headUndo = nullptr;
+// Pointer global untuk mengelola daftar berantai dan tumpukan
+Pasien* kepalaAntrean = nullptr;
+Pasien* ekorAntrean = nullptr;
+Riwayat* kepalaRiwayat = nullptr;
+Riwayat* ekorRiwayat = nullptr;
+NodeUndo* kepalaUndo = nullptr;
 
 // --- FUNGSI BANTU --- //
 
-// Fungsi untuk mengubah string ke lowercase
-string toLower(string str) {
-    for (char &c : str) {
-        c = tolower(c);
-    }
-    return str;
+string keHurufKecil(string teks) {
+    for (char &karakter : teks) karakter = tolower(karakter);
+    return teks;
 }
 
-// Validasi input tidak kosong
-string inputString(const string& prompt) {
+string inputTeks(const string& perintah) {
     string input;
     while (true) {
-        cout << prompt;
+        cout << perintah;
         getline(cin, input);
-        
-        // Hapus spasi di awal dan akhir
-        size_t start = input.find_first_not_of(" \t");
-        if (start == string::npos) {
-            cout << "Input tidak boleh kosong!\n";
-            continue;
-        }
-        size_t end = input.find_last_not_of(" \t");
-        input = input.substr(start, end - start + 1);
-        
-        if (!input.empty()) {
-            return input;
-        }
+        size_t awal = input.find_first_not_of(" \t");
+        if (awal == string::npos) { cout << "Input tidak boleh kosong!\n"; continue; }
+        size_t akhir = input.find_last_not_of(" \t");
+        input = input.substr(awal, akhir - awal + 1);
+        if (!input.empty()) return input;
         cout << "Input tidak boleh kosong!\n";
     }
 }
 
-// Validasi input integer positif (termasuk 0)
-int inputInt(const string& prompt) {
-    int value;
+int inputAngkaBulat(const string& perintah) {
+    int nilai;
     while (true) {
-        cout << prompt;
-        if (cin >> value && value >= 0) {
-            cin.ignore();
-            return value;
-        }
+        cout << perintah;
+        if (cin >> nilai && nilai >= 0) { cin.ignore(); return nilai; }
         cout << "Input harus bilangan bulat positif atau 0!\n";
-        cin.clear();
-        cin.ignore(1000, '\n');
+        cin.clear(); cin.ignore(1000, '\n');
     }
 }
 
-// Validasi input float positif
-float inputFloat(const string& prompt) {
-    float value;
+float inputAngkaDesimal(const string& perintah) {
+    float nilai;
     while (true) {
-        cout << prompt;
-        if (cin >> value && value > 0) {
-            cin.ignore();
-            return value;
-        }
+        cout << perintah;
+        if (cin >> nilai && nilai > 0) { cin.ignore(); return nilai; }
         cout << "Input harus bilangan positif!\n";
-        cin.clear();
-        cin.ignore(1000, '\n');
+        cin.clear(); cin.ignore(1000, '\n');
     }
 }
 
-// Konfirmasi ya/tidak
-bool konfirmasi(const string& prompt) {
+bool mintaKonfirmasi(const string& perintah) {
     string input;
     while (true) {
-        cout << prompt << " (y/t): ";
+        cout << perintah << " (y/t): ";
         getline(cin, input);
-        input = toLower(input);
+        input = keHurufKecil(input);
         if (input == "y") return true;
         if (input == "t") return false;
         cout << "Masukkan 'y' untuk ya atau 't' untuk tidak!\n";
     }
 }
 
-// Cek apakah poli valid
-bool isPoliValid(const string& poli) {
-    string poliLower = toLower(poli);
-    for (int i = 0; i < MAX_POLI; i++) {
-        if (toLower(poliList[i]) == poliLower) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// Format waktu ke string
-string waktuToString(time_t waktu) {
+string formatWaktu(time_t waktu) {
     char buffer[80];
-    struct tm* timeinfo = localtime(&waktu);
-    strftime(buffer, sizeof(buffer), "%d/%m/%Y %H:%M:%S", timeinfo);
+    struct tm* infoWaktu = localtime(&waktu);
+    strftime(buffer, sizeof(buffer), "%d/%m/%Y %H:%M:%S", infoWaktu);
     return string(buffer);
 }
 
-// --- FUNGSI OPERASI FILE (C-style) --- //
-
-void simpanDataKeFile() {
-    FILE* file = fopen("data_pasien.dat", "wb");
-    if (!file) {
-        cout << "Gagal membuka file untuk penyimpanan.\n";
-        return;
+char dapatkanKodePoli(const string& namaPoli) {
+    for (int i = 0; i < MAKS_POLI; ++i) {
+        if (daftarPoli[i] == namaPoli) return daftarKodePoli[i];
     }
+    return '?';
+}
 
-    // Simpan jumlah pasien
-    int jumlah = 0;
-    Pasien* current = head;
-    while (current) {
-        jumlah++;
-        current = current->next;
+bool validasiInputPoli(const string& inputPoli, string& namaPoliLengkap) {
+    string inputLower = keHurufKecil(inputPoli);
+    for (int i = 0; i < MAKS_POLI; i++) {
+        if (keHurufKecil(daftarPoli[i]) == inputLower) { namaPoliLengkap = daftarPoli[i]; return true; }
+        if (inputPoli.length() == 1 && keHurufKecil(string(1, daftarKodePoli[i])) == inputLower) { namaPoliLengkap = daftarPoli[i]; return true; }
     }
-    fwrite(&jumlah, sizeof(int), 1, file);
+    namaPoliLengkap = "";
+    return false;
+}
 
-    // Simpan data pasien
-    current = head;
-    while (current) {
-        // Simpan setiap field satu per satu
-        int namaLen = current->nama.length();
-        fwrite(&namaLen, sizeof(int), 1, file);
-        fwrite(current->nama.c_str(), sizeof(char), namaLen, file);
+// --- FUNGSI OPERASI FILE (Gaya C) --- //
 
-        int nikLen = current->nik.length();
-        fwrite(&nikLen, sizeof(int), 1, file);
-        fwrite(current->nik.c_str(), sizeof(char), nikLen, file);
+void simpanData() {
+    FILE* berkas = fopen("data_pasien.dat", "wb");
+    if (!berkas) { cout << "Gagal membuka file untuk penyimpanan.\n"; return; }
 
-        int alamatLen = current->alamat.length();
-        fwrite(&alamatLen, sizeof(int), 1, file);
-        fwrite(current->alamat.c_str(), sizeof(char), alamatLen, file);
+    int jumlah = 0; Pasien* saatIni = kepalaAntrean;
+    while (saatIni) { jumlah++; saatIni = saatIni->berikutnya; }
+    fwrite(&jumlah, sizeof(int), 1, berkas);
 
-        fwrite(&current->umur, sizeof(int), 1, file);
-        fwrite(&current->bb, sizeof(float), 1, file);
-        fwrite(&current->tb, sizeof(float), 1, file);
-
-        int poliLen = current->poli.length();
-        fwrite(&poliLen, sizeof(int), 1, file);
-        fwrite(current->poli.c_str(), sizeof(char), poliLen, file);
-
-        fwrite(&current->waktuRegistrasi, sizeof(time_t), 1, file);
-
-        current = current->next;
+    saatIni = kepalaAntrean;
+    while (saatIni) {
+        int panjangNama = saatIni->nama.length(); fwrite(&panjangNama, sizeof(int), 1, berkas); fwrite(saatIni->nama.c_str(), sizeof(char), panjangNama, berkas);
+        int panjangNik = saatIni->nik.length(); fwrite(&panjangNik, sizeof(int), 1, berkas); fwrite(saatIni->nik.c_str(), sizeof(char), panjangNik, berkas);
+        int panjangAlamat = saatIni->alamat.length(); fwrite(&panjangAlamat, sizeof(int), 1, berkas); fwrite(saatIni->alamat.c_str(), sizeof(char), panjangAlamat, berkas);
+        fwrite(&saatIni->umur, sizeof(int), 1, berkas);
+        fwrite(&saatIni->beratBadan, sizeof(float), 1, berkas);
+        fwrite(&saatIni->tinggiBadan, sizeof(float), 1, berkas);
+        int panjangPoli = saatIni->poli.length(); fwrite(&panjangPoli, sizeof(int), 1, berkas); fwrite(saatIni->poli.c_str(), sizeof(char), panjangPoli, berkas);
+        fwrite(&saatIni->waktuPendaftaran, sizeof(time_t), 1, berkas);
+        saatIni = saatIni->berikutnya;
     }
-
-    fclose(file);
+    fclose(berkas);
     cout << "Data pasien berhasil disimpan ke file.\n";
 }
 
-void bacaDataDariFile() {
-    FILE* file = fopen("data_pasien.dat", "rb");
-    if (!file) {
-        cout << "File data tidak ditemukan atau gagal dibuka.\n";
-        return;
-    }
+void muatData() {
+    FILE* berkas = fopen("data_pasien.dat", "rb");
+    if (!berkas) { cout << "File data tidak ditemukan atau gagal dibuka.\n"; return; }
 
-    // Kosongkan list terlebih dahulu
-    while (head) {
-        Pasien* temp = head;
-        head = head->next;
-        delete temp;
-    }
-    head = tail = nullptr;
+    while (kepalaAntrean) { Pasien* temp = kepalaAntrean; kepalaAntrean = kepalaAntrean->berikutnya; delete temp; }
+    kepalaAntrean = ekorAntrean = nullptr;
 
-    // Baca jumlah pasien
-    int jumlah;
-    fread(&jumlah, sizeof(int), 1, file);
-
+    int jumlah; fread(&jumlah, sizeof(int), 1, berkas);
     for (int i = 0; i < jumlah; i++) {
-        Pasien* pasien = new Pasien();
+        Pasien* pasienBaru = new Pasien();
+        int panjang; char* buffer;
 
-        // Baca nama
-        int namaLen;
-        fread(&namaLen, sizeof(int), 1, file);
-        char* namaBuffer = new char[namaLen + 1];
-        fread(namaBuffer, sizeof(char), namaLen, file);
-        namaBuffer[namaLen] = '\0';
-        pasien->nama = string(namaBuffer);
-        delete[] namaBuffer;
+        fread(&panjang, sizeof(int), 1, berkas); buffer = new char[panjang + 1]; fread(buffer, sizeof(char), panjang, berkas); buffer[panjang] = '\0'; pasienBaru->nama = string(buffer); delete[] buffer;
+        fread(&panjang, sizeof(int), 1, berkas); buffer = new char[panjang + 1]; fread(buffer, sizeof(char), panjang, berkas); buffer[panjang] = '\0'; pasienBaru->nik = string(buffer); delete[] buffer;
+        fread(&panjang, sizeof(int), 1, berkas); buffer = new char[panjang + 1]; fread(buffer, sizeof(char), panjang, berkas); buffer[panjang] = '\0'; pasienBaru->alamat = string(buffer); delete[] buffer;
+        fread(&pasienBaru->umur, sizeof(int), 1, berkas);
+        fread(&pasienBaru->beratBadan, sizeof(float), 1, berkas);
+        fread(&pasienBaru->tinggiBadan, sizeof(float), 1, berkas);
+        fread(&panjang, sizeof(int), 1, berkas); buffer = new char[panjang + 1]; fread(buffer, sizeof(char), panjang, berkas); buffer[panjang] = '\0'; pasienBaru->poli = string(buffer); delete[] buffer;
+        fread(&pasienBaru->waktuPendaftaran, sizeof(time_t), 1, berkas);
 
-        // Baca NIK
-        int nikLen;
-        fread(&nikLen, sizeof(int), 1, file);
-        char* nikBuffer = new char[nikLen + 1];
-        fread(nikBuffer, sizeof(char), nikLen, file);
-        nikBuffer[nikLen] = '\0';
-        pasien->nik = string(nikBuffer);
-        delete[] nikBuffer;
-
-        // Baca alamat
-        int alamatLen;
-        fread(&alamatLen, sizeof(int), 1, file);
-        char* alamatBuffer = new char[alamatLen + 1];
-        fread(alamatBuffer, sizeof(char), alamatLen, file);
-        alamatBuffer[alamatLen] = '\0';
-        pasien->alamat = string(alamatBuffer);
-        delete[] alamatBuffer;
-
-        fread(&pasien->umur, sizeof(int), 1, file);
-        fread(&pasien->bb, sizeof(float), 1, file);
-        fread(&pasien->tb, sizeof(float), 1, file);
-
-        // Baca poli
-        int poliLen;
-        fread(&poliLen, sizeof(int), 1, file);
-        char* poliBuffer = new char[poliLen + 1];
-        fread(poliBuffer, sizeof(char), poliLen, file);
-        poliBuffer[poliLen] = '\0';
-        pasien->poli = string(poliBuffer);
-        delete[] poliBuffer;
-
-        fread(&pasien->waktuRegistrasi, sizeof(time_t), 1, file);
-
-        // Tambahkan ke linked list
-        pasien->next = nullptr;
-        pasien->prev = tail;
-
-        if (!head) {
-            head = tail = pasien;
-        } else {
-            tail->next = pasien;
-            tail = pasien;
-        }
+        pasienBaru->berikutnya = nullptr; pasienBaru->sebelumnya = ekorAntrean;
+        if (!kepalaAntrean) kepalaAntrean = ekorAntrean = pasienBaru;
+        else { ekorAntrean->berikutnya = pasienBaru; ekorAntrean = pasienBaru; }
     }
-
-    fclose(file);
+    fclose(berkas);
     cout << "Data pasien berhasil dimuat dari file (" << jumlah << " pasien).\n";
 }
 
-// --- FUNGSI SORTING --- //
+// --- FUNGSI PENGURUTAN --- //
 
-// Bubble sort untuk mengurutkan berdasarkan waktu registrasi (ascending)
-void sortByRegistrationTime() {
-    if (!head || !head->next) return;
-
-    bool swapped;
+void urutkanWaktuRegistrasi() {
+    if (!kepalaAntrean || !kepalaAntrean->berikutnya) return;
+    bool tertukar;
     do {
-        swapped = false;
-        Pasien* current = head;
-        Pasien* prev = nullptr;
-        
-        while (current->next) {
-            if (current->waktuRegistrasi > current->next->waktuRegistrasi) {
-                // Tukar node
-                Pasien* nextNode = current->next;
-                
-                if (prev) {
-                    prev->next = nextNode;
-                } else {
-                    head = nextNode;
-                }
-                
-                current->next = nextNode->next;
-                nextNode->next = current;
-                
-                // Update prev pointers
-                nextNode->prev = prev;
-                current->prev = nextNode;
-                if (current->next) {
-                    current->next->prev = current;
-                }
-                
-                swapped = true;
-                prev = nextNode;
-            } else {
-                prev = current;
-                current = current->next;
-            }
+        tertukar = false; Pasien* saatIni = kepalaAntrean; Pasien* sebelumnya = nullptr;
+        while (saatIni->berikutnya) {
+            if (saatIni->waktuPendaftaran > saatIni->berikutnya->waktuPendaftaran) {
+                Pasien* nodeBerikutnya = saatIni->berikutnya;
+                if (sebelumnya) { sebelumnya->berikutnya = nodeBerikutnya; } else { kepalaAntrean = nodeBerikutnya; }
+                saatIni->berikutnya = nodeBerikutnya->berikutnya; nodeBerikutnya->berikutnya = saatIni;
+                nodeBerikutnya->sebelumnya = sebelumnya; saatIni->sebelumnya = nodeBerikutnya;
+                if (saatIni->berikutnya) { saatIni->berikutnya->sebelumnya = saatIni; }
+                tertukar = true;
+                sebelumnya = nodeBerikutnya;
+            } else { sebelumnya = saatIni; saatIni = saatIni->berikutnya; }
         }
-        
-        // Update tail jika diperlukan
-        tail = current;
-    } while (swapped);
+        ekorAntrean = saatIni;
+    } while (tertukar);
 }
 
-// Insertion sort untuk mengurutkan berdasarkan nama (ascending)
-void sortByName() {
-    if (!head || !head->next) return;
-
-    Pasien* sorted = nullptr;
-    Pasien* current = head;
-
-    while (current) {
-        Pasien* next = current->next;
-        
-        if (!sorted || toLower(sorted->nama) >= toLower(current->nama)) {
-            current->next = sorted;
-            current->prev = nullptr;
-            if (sorted) sorted->prev = current;
-            sorted = current;
+void urutkanNama() {
+    if (!kepalaAntrean || !kepalaAntrean->berikutnya) return;
+    Pasien* terurut = nullptr; Pasien* saatIni = kepalaAntrean;
+    while (saatIni) {
+        Pasien* berikutnya = saatIni->berikutnya;
+        if (!terurut || keHurufKecil(terurut->nama) >= keHurufKecil(saatIni->nama)) {
+            saatIni->berikutnya = terurut; saatIni->sebelumnya = nullptr;
+            if (terurut) terurut->sebelumnya = saatIni;
+            terurut = saatIni;
         } else {
-            Pasien* temp = sorted;
-            while (temp->next && toLower(temp->next->nama) < toLower(current->nama)) {
-                temp = temp->next;
-            }
-            current->next = temp->next;
-            current->prev = temp;
-            if (temp->next) temp->next->prev = current;
-            temp->next = current;
+            Pasien* temp = terurut;
+            while (temp->berikutnya && keHurufKecil(temp->berikutnya->nama) < keHurufKecil(saatIni->nama)) temp = temp->berikutnya;
+            saatIni->berikutnya = temp->berikutnya; saatIni->sebelumnya = temp;
+            if (temp->berikutnya) temp->berikutnya->sebelumnya = saatIni;
+            temp->berikutnya = saatIni;
         }
-        
-        current = next;
+        saatIni = berikutnya;
     }
-
-    // Update head dan tail
-    head = sorted;
-    tail = sorted;
-    while (tail && tail->next) {
-        tail = tail->next;
-    }
+    kepalaAntrean = terurut; ekorAntrean = terurut;
+    while (ekorAntrean && ekorAntrean->berikutnya) ekorAntrean = ekorAntrean->berikutnya;
 }
 
-// --- FUNGSI SEARCHING --- //
+// --- FUNGSI PENCARIAN --- //
 
-// Binary search untuk mencari berdasarkan NIK (harus diurutkan terlebih dahulu)
-Pasien* binarySearchByNIK(const string& nik) {
-    // Konversi linked list ke array untuk binary search
-    int count = 0;
-    Pasien* current = head;
-    while (current) {
-        count++;
-        current = current->next;
+Pasien* cariBinerNIK(const string& nikDicari) {
+    int hitung = 0; Pasien* saatIni = kepalaAntrean;
+    while (saatIni) { hitung++; saatIni = saatIni->berikutnya; }
+    if (hitung == 0) return nullptr;
+    Pasien** larik = new Pasien*[hitung];
+    saatIni = kepalaAntrean;
+    for (int i = 0; i < hitung; i++) { larik[i] = saatIni; saatIni = saatIni->berikutnya; }
+
+    int kiri = 0, kanan = hitung - 1;
+    while (kiri <= kanan) {
+        int tengah = kiri + (kanan - kiri) / 2;
+        if (larik[tengah]->nik == nikDicari) { Pasien* hasil = larik[tengah]; delete[] larik; return hasil; }
+        if (larik[tengah]->nik < nikDicari) kiri = tengah + 1; else kanan = tengah - 1;
     }
-
-    if (count == 0) return nullptr;
-
-    Pasien** arr = new Pasien*[count];
-    current = head;
-    for (int i = 0; i < count; i++) {
-        arr[i] = current;
-        current = current->next;
-    }
-
-    int left = 0, right = count - 1;
-    while (left <= right) {
-        int mid = left + (right - left) / 2;
-        
-        if (arr[mid]->nik == nik) {
-            Pasien* result = arr[mid];
-            delete[] arr;
-            return result;
-        }
-        
-        if (arr[mid]->nik < nik) {
-            left = mid + 1;
-        } else {
-            right = mid - 1;
-        }
-    }
-
-    delete[] arr;
-    return nullptr;
+    delete[] larik; return nullptr;
 }
 
-// Linear search dengan jump untuk mencari berdasarkan nama
-void jumpSearchByName(const string& nama) {
-    if (!head) {
-        cout << "Antrian kosong.\n";
-        return;
+void cariLompatNama(const string& namaDicari) {
+    if (!kepalaAntrean) { cout << "Antrian kosong.\n"; return; }
+    int n = 0; Pasien* saatIni = kepalaAntrean;
+    while (saatIni) { n++; saatIni = saatIni->berikutnya; }
+    int langkah = sqrt(n);
+    bool ditemukan = false; string namaDicariKecil = keHurufKecil(namaDicari);
+    Pasien* nodeSebelumnya = nullptr; saatIni = kepalaAntrean;
+
+    while (saatIni) {
+        int hitungLangkah = 0;
+        while (hitungLangkah < langkah && saatIni) { nodeSebelumnya = saatIni; saatIni = saatIni->berikutnya; hitungLangkah++; }
+        if (!saatIni || keHurufKecil(nodeSebelumnya->nama) >= namaDicariKecil) break;
     }
-
-    int n = 0;
-    Pasien* current = head;
-    while (current) {
-        n++;
-        current = current->next;
-    }
-
-    int step = sqrt(n);
-    int prev = 0;
-    bool found = false;
-    string namaLower = toLower(nama);
-
-    Pasien* prevNode = nullptr;
-    current = head;
-
-    while (current) {
-        int count = 0;
-        while (count < step && current) {
-            prevNode = current;
-            current = current->next;
-            count++;
+    while (nodeSebelumnya) {
+        if (keHurufKecil(nodeSebelumnya->nama).find(namaDicariKecil) != string::npos) {
+            cout << "Ditemukan: " << nodeSebelumnya->nama << " (NIK: " << nodeSebelumnya->nik << ")\n";
+            ditemukan = true;
         }
-
-        if (!current || toLower(prevNode->nama) >= namaLower) {
-            break;
-        }
+        nodeSebelumnya = nodeSebelumnya->sebelumnya;
     }
-
-    // Linear search backward
-    while (prevNode) {
-        if (toLower(prevNode->nama).find(namaLower) != string::npos) {
-            cout << "Ditemukan: " << prevNode->nama << " (NIK: " << prevNode->nik << ")\n";
-            found = true;
-        }
-        prevNode = prevNode->prev;
-    }
-
-    if (!found) {
-        cout << "Pasien dengan nama '" << nama << "' tidak ditemukan.\n";
-    }
+    if (!ditemukan) cout << "Pasien dengan nama '" << namaDicari << "' tidak ditemukan.\n";
 }
 
-// --- FUNGSI UTAMA --- //
+// --- FUNGSI UTAMA OPERASI ANTRIAN --- //
 
-// Tambah pasien ke antrian (queue)
-void tambahAntrian(Pasien* pasien) {
-    pasien->waktuRegistrasi = time(nullptr);
-    pasien->next = nullptr;
-    pasien->prev = tail;
-
-    if (!head) {
-        head = tail = pasien;
-    } else {
-        tail->next = pasien;
-        tail = pasien;
-    }
+void tambahAntreanPasien(Pasien* pasienBaru) {
+    pasienBaru->waktuPendaftaran = time(nullptr);
+    pasienBaru->berikutnya = nullptr; pasienBaru->sebelumnya = ekorAntrean;
+    if (!kepalaAntrean) kepalaAntrean = ekorAntrean = pasienBaru;
+    else { ekorAntrean->berikutnya = pasienBaru; ekorAntrean = pasienBaru; }
 }
 
-// Hapus pasien dari antrian berdasarkan NIK
-Pasien* hapusAntrian(const string& nik) {
-    Pasien* current = head;
-
-    while (current) {
-        if (current->nik == nik) {
-            if (current->prev) {
-                current->prev->next = current->next;
-            } else {
-                head = current->next;
-            }
-
-            if (current->next) {
-                current->next->prev = current->prev;
-            } else {
-                tail = current->prev;
-            }
-
-            current->next = nullptr;
-            current->prev = nullptr;
-            return current;
+Pasien* hapusAntreanPasien(const string& nik) {
+    Pasien* saatIni = kepalaAntrean;
+    while (saatIni) {
+        if (saatIni->nik == nik) {
+            if (saatIni->sebelumnya) saatIni->sebelumnya->berikutnya = saatIni->berikutnya; else kepalaAntrean = saatIni->berikutnya;
+            if (saatIni->berikutnya) saatIni->berikutnya->sebelumnya = saatIni->sebelumnya; else ekorAntrean = saatIni->sebelumnya;
+            saatIni->berikutnya = nullptr; saatIni->sebelumnya = nullptr;
+            return saatIni;
         }
-        current = current->next;
+        saatIni = saatIni->berikutnya;
     }
     return nullptr;
 }
 
-// Layani pasien (pindahkan dari antrian ke riwayat)
-void layaniPasien() {
-    if (!konfirmasi("\nApakah Anda yakin ingin melayani pasien berikutnya?")) {
-        cout << "Pelayanan pasien dibatalkan.\n";
-        return;
-    }
+void layaniPasienBerikutnya() {
+    if (!mintaKonfirmasi("\nApakah Anda yakin ingin melayani pasien berikutnya?")) { cout << "Pelayanan pasien dibatalkan.\n"; return; }
+    if (!kepalaAntrean) { cout << "\nAntrian kosong, tidak ada pasien yang bisa dilayani.\n"; return; }
 
-    if (!head) {
-        cout << "\nAntrian kosong, tidak ada pasien yang bisa dilayani.\n";
-        return;
-    }
+    Pasien* pasienDilayani = kepalaAntrean;
+    kepalaAntrean = kepalaAntrean->berikutnya;
+    if (kepalaAntrean) kepalaAntrean->sebelumnya = nullptr;
+    if (!kepalaAntrean) ekorAntrean = nullptr;
 
-    Pasien* pasien = head;
-    head = head->next;
-    if (head) head->prev = nullptr;
-    if (!head) tail = nullptr;
-
-    // Tambahkan ke riwayat (stack)
     Riwayat* riwayatBaru = new Riwayat;
-    riwayatBaru->nik = pasien->nik;
-    riwayatBaru->nama = pasien->nama;
-    riwayatBaru->poli = pasien->poli;
+    riwayatBaru->nik = pasienDilayani->nik; riwayatBaru->nama = pasienDilayani->nama; riwayatBaru->poli = pasienDilayani->poli;
     riwayatBaru->waktuPelayanan = time(nullptr);
-    riwayatBaru->next = headRiwayat;
-    riwayatBaru->prev = nullptr;
-    
-    if (headRiwayat) headRiwayat->prev = riwayatBaru;
-    headRiwayat = riwayatBaru;
-    if (!tailRiwayat) tailRiwayat = riwayatBaru;
+    riwayatBaru->berikutnya = kepalaRiwayat; riwayatBaru->sebelumnya = nullptr;
+    if (kepalaRiwayat) kepalaRiwayat->sebelumnya = riwayatBaru;
+    kepalaRiwayat = riwayatBaru;
+    if (!ekorRiwayat) ekorRiwayat = riwayatBaru;
 
-    cout << "\nPasien dengan NIK " << pasien->nik << " (" << pasien->nama 
-         << ") telah dilayani di poli " << pasien->poli << ".\n";
-
-    delete pasien;
-    simpanDataKeFile();
+    cout << "\nPasien dengan NIK " << pasienDilayani->nik << " (" << pasienDilayani->nama 
+         << ") telah dilayani di poli " << pasienDilayani->poli << ".\n";
+    delete pasienDilayani;
+    simpanData();
 }
 
-// Batalkan antrian pasien
-void batalAntrian() {
-    if (!head) {
-        cout << "\nAntrian kosong, tidak ada pasien untuk dibatalkan.\n";
-        return;
+void batalkanAntreanPasien() {
+    if (!kepalaAntrean) { cout << "\nAntrian kosong, tidak ada pasien untuk dibatalkan.\n"; return; }
+    string nik = inputTeks("\nMasukkan NIK pasien yang akan dibatalkan: ");
+    Pasien* pasienDibatalkan = hapusAntreanPasien(nik);
+
+    if (!pasienDibatalkan) { cout << "Pasien dengan NIK " << nik << " tidak ditemukan.\n"; return; }
+    if (!mintaKonfirmasi("Apakah Anda yakin ingin membatalkan antrian pasien ini?")) {
+        tambahAntreanPasien(pasienDibatalkan); cout << "Pembatalan antrian dibatalkan.\n"; return;
     }
-
-    string nik = inputString("\nMasukkan NIK pasien yang akan dibatalkan: ");
-    Pasien* pasien = hapusAntrian(nik);
-
-    if (!pasien) {
-        cout << "Pasien dengan NIK " << nik << " tidak ditemukan.\n";
-        return;
-    }
-
-    if (!konfirmasi("Apakah Anda yakin ingin membatalkan antrian pasien ini?")) {
-        tambahAntrian(pasien);
-        cout << "Pembatalan antrian dibatalkan.\n";
-        return;
-    }
-
-    // Simpan di stack undo
-    UndoNode* undoNode = new UndoNode;
-    undoNode->pasien = pasien;
-    undoNode->next = headUndo;
-    headUndo = undoNode;
+    NodeUndo* nodeUndo = new NodeUndo;
+    nodeUndo->pasien = pasienDibatalkan; nodeUndo->berikutnya = kepalaUndo;
+    kepalaUndo = nodeUndo;
 
     cout << "Antrian pasien dengan NIK " << nik << " berhasil dibatalkan.\n";
-    simpanDataKeFile();
+    simpanData();
 }
 
-// Undo pembatalan terakhir
-void undoBatal() {
-    if (!headUndo) {
-        cout << "\nTidak ada aksi batal yang bisa di-undo.\n";
-        return;
-    }
+void batalkanUndo() {
+    if (!kepalaUndo) { cout << "\nTidak ada aksi batal yang bisa di-undo.\n"; return; }
+    if (!mintaKonfirmasi("\nApakah Anda yakin ingin mengembalikan pembatalan terakhir?")) { cout << "Undo dibatalkan.\n"; return; }
 
-    if (!konfirmasi("\nApakah Anda yakin ingin mengembalikan pembatalan terakhir?")) {
-        cout << "Undo dibatalkan.\n";
-        return;
-    }
-
-    UndoNode* undoNode = headUndo;
-    headUndo = headUndo->next;
-
-    tambahAntrian(undoNode->pasien);
-    cout << "\nUndo berhasil. Pasien dengan NIK " << undoNode->pasien->nik 
+    NodeUndo* nodeUndo = kepalaUndo;
+    kepalaUndo = kepalaUndo->berikutnya;
+    tambahAntreanPasien(nodeUndo->pasien);
+    cout << "\nUndo berhasil. Pasien dengan NIK " << nodeUndo->pasien->nik 
          << " dikembalikan ke antrian.\n";
-
-    delete undoNode;
-    simpanDataKeFile();
+    delete nodeUndo;
+    simpanData();
 }
 
-// Tampilkan semua antrian
-void tampilkanAntrian() {
-    if (!head) {
-        cout << "\nAntrian kosong.\n";
-        return;
-    }
-
+// Menampilkan semua pasien dalam antrean aktif
+void tampilkanSemuaAntrean() {
+    if (!kepalaAntrean) { cout << "\nAntrian kosong.\n"; return; }
     cout << "\n=== DAFTAR ANTRIAN PASIEN ===\n";
-    cout << "No  Nama                NIK                 Poli           Waktu Registrasi\n";
-    cout << "--------------------------------------------------------------------------\n";
+    cout << left << setw(4) << "No"
+         << left << setw(20) << "Nama"
+         << left << setw(20) << "NIK"
+         << left << setw(18) << "Poli (Kode)"
+         << left << "Waktu Registrasi\n";
+    cout << "------------------------------------------------------------------------------------\n";
 
-    Pasien* current = head;
-    int nomor = 1;
-    while (current) {
-        string namaTampil = current->nama;
-        if (namaTampil.length() > 18) {
-            namaTampil = namaTampil.substr(0, 15) + "...";
-        }
+    Pasien* saatIni = kepalaAntrean; int nomor = 1;
+    while (saatIni) {
+        string namaTampil = saatIni->nama;
+        if (namaTampil.length() > 19) namaTampil = namaTampil.substr(0, 16) + "...";
         
-        cout << nomor++ << "   ";
-        cout << namaTampil;
-        for (int i = namaTampil.length(); i < 19; i++) cout << " ";
-        
-        cout << current->nik << "  ";
-        cout << current->poli;
-        for (int i = current->poli.length(); i < 14; i++) cout << " ";
-        
-        cout << waktuToString(current->waktuRegistrasi) << endl;
-        current = current->next;
+        string poliTampil = saatIni->poli + " (" + dapatkanKodePoli(saatIni->poli) + ")";
+        if (poliTampil.length() > 17) poliTampil = poliTampil.substr(0, 14) + "...";
+
+        cout << left << setw(4) << (to_string(nomor++) + ".");
+        cout << left << setw(20) << namaTampil; 
+        cout << left << setw(20) << saatIni->nik;
+        cout << left << setw(18) << poliTampil;
+        cout << left << formatWaktu(saatIni->waktuPendaftaran) << endl;
+        saatIni = saatIni->berikutnya;
     }
+    cout << "------------------------------------------------------------------------------------\n";
 }
 
-// Tampilkan riwayat pelayanan (dalam urutan terbalik)
-void tampilkanRiwayat() {
-    if (!headRiwayat) {
-        cout << "\nBelum ada riwayat pelayanan.\n";
-        return;
-    }
-
+// Menampilkan riwayat pelayanan (urutan terbaru ke terlama)
+void tampilkanRiwayatPelayanan() {
+    if (!kepalaRiwayat) { cout << "\nBelum ada riwayat pelayanan.\n"; return; }
     cout << "\n=== RIWAYAT PELAYANAN (TERBARU -> TERLAMA) ===\n";
-    cout << "No  Nama                NIK                 Poli           Waktu Pelayanan\n";
-    cout << "--------------------------------------------------------------------------\n";
+    cout << left << setw(4) << "No"
+         << left << setw(20) << "Nama"
+         << left << setw(20) << "NIK"
+         << left << setw(18) << "Poli (Kode)" 
+         << left << "Waktu Pelayanan\n";
+    cout << "------------------------------------------------------------------------------------\n"; // Garis juga disesuaikan
 
-    Riwayat* current = headRiwayat;
-    int nomor = 1;
-    while (current) {
-        string namaTampil = current->nama;
-        if (namaTampil.length() > 18) {
-            namaTampil = namaTampil.substr(0, 15) + "...";
-        }
+    Riwayat* saatIni = kepalaRiwayat; int nomor = 1;
+    while (saatIni) {
+        string namaTampil = saatIni->nama;
+        if (namaTampil.length() > 19) namaTampil = namaTampil.substr(0, 16) + "...";
         
-        cout << nomor++ << "   ";
-        cout << namaTampil;
-        for (int i = namaTampil.length(); i < 19; i++) cout << " ";
+        string poliTampil = saatIni->poli + " (" + dapatkanKodePoli(saatIni->poli) + ")";
+        if (poliTampil.length() > 17) poliTampil = poliTampil.substr(0, 14) + "...";
         
-        cout << current->nik << "  ";
-        cout << current->poli;
-        for (int i = current->poli.length(); i < 14; i++) cout << " ";
-        
-        cout << waktuToString(current->waktuPelayanan) << endl;
-        current = current->next;
+        cout << left << setw(4) << (to_string(nomor++) + ".");
+        cout << left << setw(20) << namaTampil;
+        cout << left << setw(20) << saatIni->nik;
+        cout << left << setw(18) << poliTampil;
+        cout << left << formatWaktu(saatIni->waktuPelayanan) << endl;
+        saatIni = saatIni->berikutnya;
     }
+    cout << "------------------------------------------------------------------------------------\n";
 }
 
-// Menu registrasi pasien
-void menuRegistrasi() {
+// Menu pendaftaran pasien baru
+void menuPendaftaranPasien() {
     cout << "\n=== REGISTRASI PASIEN ===\n";
-    
-    Pasien* pasien = new Pasien();
-    pasien->nama = inputString("Nama Lengkap: ");
-    pasien->nik = inputString("NIK: ");
-    pasien->alamat = inputString("Alamat: ");
-    pasien->umur = inputInt("Umur (tahun): ");
-    pasien->bb = inputFloat("Berat Badan (kg): ");
-    pasien->tb = inputFloat("Tinggi Badan (cm): ");
+    Pasien* pasienBaru = new Pasien();
+    pasienBaru->nama = inputTeks("Nama Lengkap: ");
+    pasienBaru->nik = inputTeks("NIK: ");
+    pasienBaru->alamat = inputTeks("Alamat: ");
+    pasienBaru->umur = inputAngkaBulat("Umur (tahun): ");
+    pasienBaru->beratBadan = inputAngkaDesimal("Berat Badan (kg): ");
+    pasienBaru->tinggiBadan = inputAngkaDesimal("Tinggi Badan (cm): ");
 
-    // Input poli dengan validasi
-    cout << "\nDaftar Poli: ";
-    for (int i = 0; i < MAX_POLI; i++) {
-        cout << poliList[i];
-        if (i < MAX_POLI - 1) cout << ", ";
+    cout << "\nDaftar Poli:\n"; // Tampilkan daftar poli dengan kode
+    for (int i = 0; i < MAKS_POLI; i++) {
+        cout << "  " << daftarKodePoli[i] << ". " << daftarPoli[i] << "\n";
     }
     cout << endl;
 
+    string inputPoliPasien;
+    string namaPoliDitemukan;
     while (true) {
-        string poli = inputString("Poli yang Dituju: ");
-        for (int i = 0; i < MAX_POLI; i++) {
-            if (toLower(poliList[i]) == toLower(poli)) {
-                pasien->poli = poliList[i];
-                break;
-            }
+        inputPoliPasien = inputTeks("Poli yang Dituju (Kode/Nama): ");
+        if (validasiInputPoli(inputPoliPasien, namaPoliDitemukan)) {
+            pasienBaru->poli = namaPoliDitemukan;
+            break;
         }
-        
-        if (!pasien->poli.empty()) break;
         cout << "Poli tidak valid! Silakan coba lagi.\n";
     }
 
-    // Konfirmasi
-    cout << "\nKonfirmasi Data Pasien:\n";
-    cout << "Nama       : " << pasien->nama << "\n";
-    cout << "NIK        : " << pasien->nik << "\n";
-    cout << "Alamat     : " << pasien->alamat << "\n";
-    cout << "Umur       : " << pasien->umur << " tahun\n";
-    cout << "Berat Badan: " << pasien->bb << " kg\n";
-    cout << "Tinggi Badan: " << pasien->tb << " cm\n";
-    cout << "Poli       : " << pasien->poli << "\n";
+    // Konfirmasi data pasien
+    cout << "\nKonfirmasi Data Pasien:\n"
+         << "Nama       : " << pasienBaru->nama << "\n"
+         << "NIK        : " << pasienBaru->nik << "\n"
+         << "Alamat     : " << pasienBaru->alamat << "\n"
+         << "Umur       : " << pasienBaru->umur << " tahun\n"
+         << "Berat Badan: " << pasienBaru->beratBadan << " kg\n"
+         << "Tinggi Badan: " << pasienBaru->tinggiBadan << " cm\n"
+         << "Poli       : " << pasienBaru->poli << " (" << dapatkanKodePoli(pasienBaru->poli) << ")\n";
 
-    if (konfirmasi("Tambahkan pasien ke antrian?")) {
-        tambahAntrian(pasien);
+    if (mintaKonfirmasi("Tambahkan pasien ke antrian?")) {
+        tambahAntreanPasien(pasienBaru);
         cout << "Pasien berhasil didaftarkan ke antrian.\n";
-        simpanDataKeFile();
-    } else {
-        delete pasien;
-        cout << "Pendaftaran dibatalkan.\n";
-    }
+        simpanData();
+    } else { delete pasienBaru; cout << "Pendaftaran dibatalkan.\n"; }
 }
 
-// Menu sorting
-void menuSorting() {
-    if (!head || !head->next) {
-        cout << "\nTidak cukup data untuk diurutkan.\n";
-        return;
-    }
+// Menu pengurutan antrean
+void menuPengurutan() {
+    if (!kepalaAntrean || !kepalaAntrean->berikutnya) { cout << "\nTidak cukup data untuk diurutkan.\n"; return; }
+    cout << "\n=== MENU PENGURUTAN ===\n"
+         << "1. Urutkan berdasarkan waktu registrasi (terlama -> terbaru)\n"
+         << "2. Urutkan berdasarkan nama (A -> Z)\n"
+         << "3. Kembali\n";
 
-    cout << "\n=== MENU PENGURUTAN ===\n";
-    cout << "1. Urutkan berdasarkan waktu registrasi (terlama -> terbaru)\n";
-    cout << "2. Urutkan berdasarkan nama (A -> Z)\n";
-    cout << "3. Kembali\n";
-
-    int pilihan = inputInt("Pilih metode pengurutan: ");
-
+    int pilihan = inputAngkaBulat("Pilih metode pengurutan: ");
     switch (pilihan) {
-        case 1:
-            sortByRegistrationTime();
-            cout << "Data berhasil diurutkan berdasarkan waktu registrasi.\n";
-            tampilkanAntrian();
-            break;
-        case 2:
-            sortByName();
-            cout << "Data berhasil diurutkan berdasarkan nama.\n";
-            tampilkanAntrian();
-            break;
-        case 3:
-            break;
-        default:
-            cout << "Pilihan tidak valid!\n";
+        case 1: urutkanWaktuRegistrasi(); cout << "Data berhasil diurutkan berdasarkan waktu registrasi.\n"; tampilkanSemuaAntrean(); break;
+        case 2: urutkanNama(); cout << "Data berhasil diurutkan berdasarkan nama.\n"; tampilkanSemuaAntrean(); break;
+        case 3: break;
+        default: cout << "Pilihan tidak valid!\n";
     }
 }
 
-// Menu searching
-void menuSearching() {
-    cout << "\n=== MENU PENCARIAN ===\n";
-    cout << "1. Cari berdasarkan NIK (binary search)\n";
-    cout << "2. Cari berdasarkan nama (jump search)\n";
-    cout << "3. Kembali\n";
+// Menu pencarian pasien
+void menuPencarian() {
+    cout << "\n=== MENU PENCARIAN ===\n"
+         << "1. Cari berdasarkan NIK (pencarian biner)\n"
+         << "2. Cari berdasarkan nama (pencarian lompat)\n"
+         << "3. Kembali\n";
 
-    int pilihan = inputInt("Pilih metode pencarian: ");
-
+    int pilihan = inputAngkaBulat("Pilih metode pencarian: ");
     switch (pilihan) {
         case 1: {
-            string nik = inputString("Masukkan NIK yang dicari: ");
-            sortByName(); // Untuk contoh, kita gunakan sort by name
-            Pasien* hasil = binarySearchByNIK(nik);
+            string nik = inputTeks("Masukkan NIK yang dicari: ");
+            urutkanNama();
+            Pasien* hasil = cariBinerNIK(nik);
             if (hasil) {
-                cout << "\nData Pasien Ditemukan:\n";
-                cout << "Nama       : " << hasil->nama << "\n";
-                cout << "NIK        : " << hasil->nik << "\n";
-                cout << "Alamat     : " << hasil->alamat << "\n";
-                cout << "Umur       : " << hasil->umur << " tahun\n";
-                cout << "Berat Badan: " << hasil->bb << " kg\n";
-                cout << "Tinggi Badan: " << hasil->tb << " cm\n";
-                cout << "Poli       : " << hasil->poli << "\n";
-                cout << "Waktu Registrasi: " << waktuToString(hasil->waktuRegistrasi) << "\n";
-            } else {
-                cout << "Pasien dengan NIK " << nik << " tidak ditemukan.\n";
-            }
+                cout << "\nData Pasien Ditemukan:\n"
+                     << "Nama       : " << hasil->nama << "\n"
+                     << "NIK        : " << hasil->nik << "\n"
+                     << "Alamat     : " << hasil->alamat << "\n"
+                     << "Umur       : " << hasil->umur << " tahun\n"
+                     << "Berat Badan: " << hasil->beratBadan << " kg\n"
+                     << "Tinggi Badan: " << hasil->tinggiBadan << " cm\n"
+                     << "Poli       : " << hasil->poli << " (" << dapatkanKodePoli(hasil->poli) << ")\n"
+                     << "Waktu Registrasi: " << formatWaktu(hasil->waktuPendaftaran) << "\n";
+            } else { cout << "Pasien dengan NIK " << nik << " tidak ditemukan.\n"; }
             break;
         }
         case 2: {
-            string nama = inputString("Masukkan nama yang dicari: ");
-            jumpSearchByName(nama);
+            string nama = inputTeks("Masukkan nama yang dicari: ");
+            cariLompatNama(nama);
             break;
         }
-        case 3:
-            break;
-        default:
-            cout << "Pilihan tidak valid!\n";
+        case 3: break;
+        default: cout << "Pilihan tidak valid!\n";
     }
 }
 
-// Menu utama
-void tampilkanMenu() {
-    cout << "\n=== SISTEM ANTRIAN RUMAH SAKIT ===\n";
-    cout << "1. Registrasi Pasien Baru\n";
-    cout << "2. Layani Pasien Berikutnya\n";
-    cout << "3. Batalkan Antrian Pasien\n";
-    cout << "4. Undo Pembatalan Terakhir\n";
-    cout << "5. Tampilkan Semua Antrian\n";
-    cout << "6. Tampilkan Riwayat Pelayanan\n";
-    cout << "7. Urutkan Antrian\n";
-    cout << "8. Cari Pasien\n";
-    cout << "9. Simpan Data ke File\n";
-    cout << "10. Muat Data dari File\n";
-    cout << "0. Keluar\n";
+// Menampilkan menu utama aplikasi
+void tampilkanMenuUtama() {
+    cout << "\n=== SISTEM ANTRIAN RUMAH SAKIT ===\n"
+         << "1. Registrasi Pasien Baru\n"
+         << "2. Layani Pasien Berikutnya\n"
+         << "3. Batalkan Antrian Pasien\n"
+         << "4. Batalkan Undo Pembatalan Terakhir\n"
+         << "5. Tampilkan Semua Antrian\n"
+         << "6. Tampilkan Riwayat Pelayanan\n"
+         << "7. Urutkan Antrian\n"
+         << "8. Cari Pasien\n"
+         << "9. Simpan Data ke File\n"
+         << "10. Muat Data dari File\n"
+         << "0. Keluar\n";
 }
 
-// Fungsi utama
+void balikKeMenu(){
+    cout << "\nTekan Enter untuk kembali ke menu utama...";
+    cin.ignore();
+    system("cls");
+}
+
+// Fungsi utama program
 int main() {
-    // Muat data dari file saat program dimulai
-    bacaDataDariFile();
-
+    muatData();
     while (true) {
-        tampilkanMenu();
-        int pilihan = inputInt("Pilih menu: ");
-
+        tampilkanMenuUtama();
+        int pilihan = inputAngkaBulat("Pilih menu: ");
+        system("cls");
         switch (pilihan) {
-            case 1: menuRegistrasi(); break;
-            case 2: layaniPasien(); break;
-            case 3: batalAntrian(); break;
-            case 4: undoBatal(); break;
-            case 5: tampilkanAntrian(); break;
-            case 6: tampilkanRiwayat(); break;
-            case 7: menuSorting(); break;
-            case 8: menuSearching(); break;
-            case 9: simpanDataKeFile(); break;
-            case 10: bacaDataDariFile(); break;
+            case 1: menuPendaftaranPasien(); balikKeMenu(); break;
+            case 2: layaniPasienBerikutnya(); balikKeMenu(); break;
+            case 3: batalkanAntreanPasien(); balikKeMenu(); break;
+            case 4: batalkanUndo(); balikKeMenu(); break;
+            case 5: tampilkanSemuaAntrean(); balikKeMenu(); break;
+            case 6: tampilkanRiwayatPelayanan(); balikKeMenu(); break;
+            case 7: menuPengurutan(); balikKeMenu(); break;
+            case 8: menuPencarian(); balikKeMenu(); break;
+            case 9: simpanData(); balikKeMenu(); break;
+            case 10: muatData(); balikKeMenu(); break;
             case 0: 
-                if (konfirmasi("\nApakah Anda yakin ingin keluar?")) {
+                if (mintaKonfirmasi("\nApakah Anda yakin ingin keluar?")) {
                     cout << "\nTerima kasih telah menggunakan sistem ini.\n";
-                    
-                    // Bersihkan memori
-                    while (head) {
-                        Pasien* temp = head;
-                        head = head->next;
-                        delete temp;
-                    }
-                    
-                    while (headRiwayat) {
-                        Riwayat* temp = headRiwayat;
-                        headRiwayat = headRiwayat->next;
-                        delete temp;
-                    }
-                    
-                    while (headUndo) {
-                        UndoNode* temp = headUndo;
-                        headUndo = headUndo->next;
-                        delete temp->pasien;
-                        delete temp;
-                    }
-                    
+                    while (kepalaAntrean) { Pasien* temp = kepalaAntrean; kepalaAntrean = kepalaAntrean->berikutnya; delete temp; }
+                    while (kepalaRiwayat) { Riwayat* temp = kepalaRiwayat; kepalaRiwayat = kepalaRiwayat->berikutnya; delete temp; }
+                    while (kepalaUndo) { NodeUndo* temp = kepalaUndo; kepalaUndo = kepalaUndo->berikutnya; delete temp->pasien; delete temp; }
                     return 0;
                 }
                 break;
-            default:
-                cout << "Pilihan tidak valid! Silakan coba lagi.\n";
+            default: cout << "Pilihan tidak valid! Silakan coba lagi.\n";
         }
     }
 }
